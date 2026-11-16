@@ -60,7 +60,7 @@ FROM ecommerce_shipping
 GROUP BY delivery_performance
 ;
 
--- Insight: 56.32% of orders are delayed — this is the baseline problem size.
+-- Insight: 56.32% of orders are delayed â€” this is the baseline problem size.
 
 
 -- ------------------------------------------------------------------------
@@ -154,7 +154,7 @@ GROUP BY
 	END
 ;
 
--- Insight: Confirms slower warehouse processing correlates with higher delay —
+-- Insight: Confirms slower warehouse processing correlates with higher delay â€”
 -- Matches the pandas groupby finding from the notebook.
 
 
@@ -205,7 +205,7 @@ GROUP BY warehouse_city
 
 -- -------------------------------------------------------------------------
 -- Q9. Rank each carrier's shipping methods against each other
--- (partitioned ranking — shows each carrier's own worst method,
+-- (partitioned ranking â€” shows each carrier's own worst method,
 -- not just the single global worst)
 -- -------------------------------------------------------------------------
 
@@ -223,7 +223,7 @@ carrier,shipping_method
 ORDER BY carrier,delay_pct DESC
 ;
 
--- Insight: Every carrier has its own weak point — this surfaces each one individually,
+-- Insight: Every carrier has its own weak point â€” this surfaces each one individually,
 -- which a single global ranking would hide.
 
 -- -------------------------------------------------------------------------
@@ -241,7 +241,7 @@ FROM ecommerce_shipping
 ORDER BY order_id 
 ;
 
--- Insight: Flags individual orders that are unusually bad even for an already-slow warehouse —
+-- Insight: Flags individual orders that are unusually bad even for an already-slow warehouse â€”
 -- useful for spotting outlier cases, not just average trends.
 
 
@@ -296,7 +296,7 @@ ORDER BY warehouse_avg DESC
 
 -- -------------------------------------------------------------------------
 -- Q13. Top 5 worst carrier + method combos, filtered for reliability
--- (late rate alone can mislead if volume is tiny — filtering out
+-- (late rate alone can mislead if volume is tiny â€” filtering out
 -- low-volume noise makes this a more trustworthy "worst offenders" list)
 -- -------------------------------------------------------------------------
 
@@ -328,7 +328,7 @@ OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY
 -- =========================================================================
 
 -- -------------------------------------------------------------------------
--- Q14. Executive summary — one row per warehouse, all key metrics combined.
+-- Q14. Executive summary â€” one row per warehouse, all key metrics combined.
 -- -------------------------------------------------------------------------
 
 SELECT
@@ -342,7 +342,7 @@ FROM ecommerce_shipping
 GROUP BY warehouse_city
 ;
 
--- Insight: This single table could be handed directly to an operations manager —
+-- Insight: This single table could be handed directly to an operations manager â€”
 -- combines delay, satisfaction, and return impact per warehouse in one view.
 
 -- -------------------------------------------------------------------------
@@ -359,3 +359,153 @@ ORDER BY order_month
 ;
 
 -- Insight: Reveals whether delays are seasonal or trending in a direction over time.
+
+
+-- =========================================================================
+-- 6. DASHBOARD VALIDATION (Tableau cross-check)
+-- =========================================================================
+
+-- -------------------------------------------------------------------------
+-- Q16. Page 1 headline KPIs
+-- -------------------------------------------------------------------------
+
+SELECT
+	COUNT(*) AS total_orders,
+	CAST(SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS DECIMAL(5,1)) AS late_delivery_rate,
+	CAST(AVG(delivery_delay_days * 1.0) AS DECIMAL(5,1)) AS avg_delay,
+	CAST(AVG(customer_rating * 1.0) AS DECIMAL(5,1))AS avg_rating,
+	CAST(SUM(CASE WHEN return_requested = 'Yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS DECIMAL(5,1)) AS return_rate
+FROM ecommerce_shipping
+;
+
+-- Insight: Out of 50,000 total orders, 56.3% arrive late with an average delay of 1.3 days, 
+-- customer ratings down to 3.4/5.0 and pushing the return rate to 17.3%.
+
+
+-- -------------------------------------------------------------------------
+-- Q17. Late % by order priority
+-- -------------------------------------------------------------------------
+
+SELECT
+	order_priority,
+	SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) AS delayed_orders,
+	CAST(SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS DECIMAL(5,1)) AS late_delivery_rate
+FROM ecommerce_shipping
+GROUP BY order_priority
+ORDER BY late_delivery_rate DESC
+;
+
+-- Insight: Low priority orders suffer the highest late rate (81.7%), while Urgent orders perform best with the lowest delays (25.7%).
+
+
+-- -------------------------------------------------------------------------
+-- Q18. Top 10 customer countries by late %
+-- -------------------------------------------------------------------------
+
+SELECT TOP 10 
+	customer_country,
+	SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) AS delayed_orders,
+	CAST(SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS DECIMAL(5,1)) AS late_delivery_rate
+FROM ecommerce_shipping
+GROUP BY customer_country
+ORDER BY late_delivery_rate DESC
+;
+
+-- Insight: Brazil leads with the highest late delivery rate at 70.7%, followed closely by India at 69.0%.
+
+
+-- -------------------------------------------------------------------------
+-- Q19. Warehouse late % vs network average, in percentage points (pp)
+-- -------------------------------------------------------------------------
+
+SELECT
+	warehouse_city,
+	SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) AS delayed_orders,
+	CAST(SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS DECIMAL(5,1)) AS late_delivery_rate,
+	CAST(SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)
+	- (SELECT SUM(CASE WHEN late_delivery = 'Yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) FROM ecommerce_shipping) AS DECIMAL(5,2)) AS pp_warehouse_vs_network
+FROM ecommerce_shipping
+GROUP BY warehouse_city
+ORDER BY pp_warehouse_vs_network DESC
+; 
+
+-- Insight: Sydney has the highest negative deviation (+1.26 pp) above the network average, while Singapore performs best at -2.01 pp below average.'
+
+
+-- -------------------------------------------------------------------------
+-- Q20. Average warehouse processing hours by delivery performance
+-- -------------------------------------------------------------------------
+
+SELECT 
+	delivery_performance,
+	CAST(AVG(warehouse_processing_hours) AS DECIMAL(5,1)) AS avg_processing_hours
+FROM ecommerce_shipping
+GROUP BY delivery_performance
+ORDER BY avg_processing_hours
+;
+
+-- Insight: Delayed orders experience significantly longer warehouse processing times (16.6 hours) compared to Early shipments (8.8 hours).
+
+
+-- -------------------------------------------------------------------------
+-- Q21. Average rating and return rate by delivery performance
+-- -------------------------------------------------------------------------
+
+SELECT
+	delivery_performance,
+	CAST(AVG(customer_rating * 1.0) AS DECIMAL(5,1)) AS avg_customer_rating,
+	CAST(SUM(CASE WHEN return_requested = 'Yes' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS DECIMAL(5,1)) AS return_rate
+FROM ecommerce_shipping
+GROUP BY delivery_performance
+ORDER BY avg_customer_rating DESC, return_rate
+;
+
+-- Insight: On-time and early deliveries maintain a high customer rating of 4.2, which drops sharply to 2.7 for delayed shipments.
+
+
+-- -------------------------------------------------------------------------
+-- Q22. Average rating by number of delivery attempts
+-- -------------------------------------------------------------------------
+
+SELECT
+	 delivery_attempts,
+	 COUNT(*) AS total_orders,
+	 CAST(AVG(customer_rating * 1.0) AS DECIMAL(5,1)) AS avg_customer_rating
+FROM ecommerce_shipping
+GROUP BY delivery_attempts
+ORDER BY delivery_attempts, avg_customer_rating
+;
+
+-- Insight: Customer ratings remain stable at 3.3 to 3.4 for 1-2 delivery attempts, but drop sharply to 2.4 when attempts reach 3.
+
+
+-- -------------------------------------------------------------------------
+-- Q23. Average delay by weather condition
+-- -------------------------------------------------------------------------
+
+SELECT 
+	weather_condition,
+	COUNT(*) AS total_orders,
+	CAST(AVG(delivery_delay_days * 1.0) AS DECIMAL(5,1)) AS avg_delay_days
+FROM ecommerce_shipping
+GROUP BY weather_condition
+ORDER BY avg_delay_d desc
+;
+
+-- Insight: Snow conditions cause the longest average delivery delays at 3.2 days, 
+-- followed by Storms at 2.8 days, while Clear weather sees the lowest delay at 0.5 days.
+
+
+-- -------------------------------------------------------------------------
+-- Q24. Shipping cost per kg by method 
+-- -------------------------------------------------------------------------
+
+SELECT
+	shipping_method,
+	CAST(AVG(shipping_cost_PER_KG) AS DECIMAL(5,1)) AS cost_per_kg
+FROM ecommerce_shipping
+GROUP BY shipping_method
+ORDER BY cost_per_kg DESC
+;
+
+-- Insight: International shipping incurs the highest average cost per kg at 463.5, while Economy is the most cost-efficient at 106.5.
